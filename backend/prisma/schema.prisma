@@ -1,0 +1,84 @@
+// Random Live — data model (MVP core loop)
+// Guests get real rows so reports / blocks / bans / account upgrade
+// can FK against them in later phases without a migration of session data.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  ACTIVE
+  BANNED
+  DELETED
+}
+
+enum SessionMode {
+  VIDEO
+  TEXT
+}
+
+enum EndReason {
+  NEXT       // a participant pressed Next
+  DISCONNECT // a participant dropped (socket closed)
+  ENDED      // a participant ended the call explicitly
+}
+
+model User {
+  id          String     @id @default(cuid())
+  isGuest     Boolean    @default(true)
+  displayName String
+  language    String     @default("en")
+  interests   String[]   @default([])
+  status      UserStatus @default(ACTIVE)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  sessionsAsA Session[]  @relation("SessionUserA")
+  sessionsAsB Session[]  @relation("SessionUserB")
+  messages     Message[]
+
+  @@index([status])
+  @@map("users")
+}
+
+model Session {
+  id          String     @id @default(cuid())
+  roomId      String     @unique
+  mode        SessionMode @default(VIDEO)
+  userAId     String
+  userBId     String
+  startedAt   DateTime   @default(now())
+  endedAt     DateTime?
+  durationSec Int?
+  endReason   EndReason?
+
+  userA User @relation("SessionUserA", fields: [userAId], references: [id])
+  userB User @relation("SessionUserB", fields: [userBId], references: [id])
+
+  messages Message[]
+
+  @@index([userAId])
+  @@index([userBId])
+  @@index([startedAt])
+  @@map("sessions")
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  sessionId String
+  senderId  String
+  body      String
+  createdAt DateTime @default(now())
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  sender  User    @relation(fields: [senderId], references: [id])
+
+  @@index([sessionId, createdAt])
+  @@index([senderId])
+  @@map("messages")
+}

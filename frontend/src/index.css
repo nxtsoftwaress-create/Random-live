@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    @apply antialiased scroll-smooth;
+  }
+  body {
+    @apply bg-void font-body text-slate-200 overflow-x-hidden;
+    background-image:
+      radial-gradient(60rem 60rem at 85% -10%, rgba(217, 65, 72, 0.16), transparent 60%),
+      radial-gradient(50rem 50rem at -10% 40%, rgba(255, 255, 255, 0.07), transparent 60%),
+      radial-gradient(40rem 40rem at 50% 120%, rgba(217, 65, 72, 0.1), transparent 60%);
+    background-attachment: fixed;
+  }
+  ::selection {
+    @apply bg-brand/50 text-white;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(217, 65, 72, 0.4) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-brand/40;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@layer components {
+  /* Frosted glass panel */
+  .glass {
+    @apply rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-xl;
+  }
+  /* Heavier glass for modals / hero cards */
+  .glass-strong {
+    @apply rounded-2xl border border-white/10 bg-panel/80 shadow-glow-lg backdrop-blur-2xl;
+  }
+  .text-gradient {
+    @apply bg-gradient-to-r from-brand via-brand-light to-white bg-clip-text text-transparent;
+  }
+  .input-dark {
+    @apply w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-brand/70 focus:outline-none focus:ring-2 focus:ring-brand/40;
+  }
+  .chip {
+    @apply cursor-pointer select-none rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm text-slate-300 transition-all hover:border-brand/60 hover:text-white;
+  }
+  .chip-active {
+    @apply border-brand bg-brand/25 text-white shadow-glow;
+  }
+}
+
+@layer utilities {
+  .shimmer-text {
+    background: linear-gradient(
+      110deg,
+      rgba(255, 255, 255, 0.5) 40%,
+      #ffffff 50%,
+      rgba(255, 255, 255, 0.5) 60%
+    );
+    background-size: 200% 100%;
+    @apply animate-shimmer bg-clip-text text-transparent;
+  }
+}

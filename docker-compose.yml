@@ -1,0 +1,48 @@
+version: "3.9"
+
+# Random Live — local development infrastructure
+#   docker compose up -d              → postgres + redis
+#   docker compose --profile turn up -d → also start self-hosted coturn
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: randomlive-postgres
+    environment:
+      POSTGRES_USER: randomlive
+      POSTGRES_PASSWORD: randomlive
+      POSTGRES_DB: randomlive
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U randomlive"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: randomlive-redis
+    command: ["redis-server", "--appendonly", "no", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Self-hosted TURN relay fallback (enable with: docker compose --profile turn up -d)
+  # Configure a realm + credentials before production use. See README → TURN.
+  coturn:
+    image: coturn/coturn:latest
+    container_name: randomlive-coturn
+    profiles: ["turn"]
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./infrastructure/coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+
+volumes:
+  pgdata:
