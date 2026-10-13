@@ -2,6 +2,8 @@
 
 **Meet people. Talk. Connect.** A production-shaped random video/text chat platform (Omegle-class) built as a monorepo: peer-to-peer WebRTC media, Redis-backed matchmaking, PostgreSQL session records, and a dark neon glass frontend.
 
+[![CI](https://github.com/nxtsoftwaress-create/Random-live/actions/workflows/ci.yml/badge.svg)](https://github.com/nxtsoftwaress-create/Random-live/actions/workflows/ci.yml) — backend typecheck + unit tests + build, frontend production build, on every push and PR.
+
 ```
 Landing → Rules/Age Gate → Guest → Permissions → Preferences → Matchmaking
         → WebRTC (video/audio) + Live Text → NEXT → Re-match → Session End
@@ -191,15 +193,25 @@ media moderation, device fingerprinting, TURN credential TTLs, CSP.
 5. **Scale-out** — Redis adapter for Socket.IO, matchmaker leader election, TURN fleet,
    Prometheus/Grafana metrics
 
-## Deployment notes
+## Deploy it — free
 
-- **Frontend:** Vercel / Cloudflare Pages (`VITE_API_URL` + `VITE_SOCKET_URL` → your API).
-- **Backend:** any long-lived container host (Render / Railway / Fly.io / ECS). Do **not**
-  host Socket.IO on serverless platforms.
-- **Data:** managed Postgres + Redis.
-- **TURN:** small VM with coturn; UDP 3478 + 49152-65535 open. TURN bandwidth is your
-  biggest cost at scale — direct P2P is the happy path (the UI badge shows which one
-  you're on).
+A complete **$0/month** walkthrough — static frontend, backend host, free Postgres/Redis,
+TURN, and the caveats of each free tier — lives in **[DEPLOY.md](DEPLOY.md)**. The short
+version:
+
+- **Frontend:** Cloudflare Pages / Vercel — static build, `VITE_API_URL` + `VITE_SOCKET_URL`
+  pointing at your API.
+- **Backend:** a long-lived host — Northflank free (always-on) / Render free (sleeps after
+  ~15 min idle) / Koyeb free (scale-to-zero). Do **not** host Socket.IO on serverless
+  platforms.
+- **Data:** Neon (Postgres) + Upstash (Redis), or no database at all with `PERSISTENCE=memory`.
+- **TURN:** free Metered OpenRelay credentials, or your own coturn VM (UDP 3478 +
+  49152-65535 open). TURN bandwidth is your biggest cost at scale — direct P2P is the
+  happy path (the UI badge shows which one you're on).
+
+## License
+
+Released under the [MIT License](LICENSE).
 
 ---
 
