@@ -1,0 +1,27 @@
+name: Keep API awake
+
+# The backend runs on Render's free plan, which spins the instance down after
+# ~15 minutes without inbound traffic (visitors then wait ~50s for a cold
+# start). Pinging every 10 minutes keeps it warm. Caveats: GitHub disables
+# scheduled workflows after 60 days without repo activity (re-enable in the
+# Actions tab), and an always-on instance consumes ~720 of the 750 free
+# instance-hours per workspace per month.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    name: Ping /api/v1/health
+    runs-on: ubuntu-latest
+    steps:
+      - name: Health check
+        run: |
+          curl --fail -sS --max-time 90 --retry 3 --retry-delay 20 \
+            -o /dev/null -w "health=%{http_code}\n" \
+            https://random-live-api.onrender.com/api/v1/health
