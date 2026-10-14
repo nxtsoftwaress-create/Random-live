@@ -1,0 +1,33 @@
+# Render Blueprint — Random Live backend (free, in-memory demo mode)
+# Deploy: render.com → New + → Blueprint → this repo, or
+#   https://render.com/deploy?repo=https://github.com/nxtsoftwaress-create/Random-live
+#
+# Values marked `sync: false` are prompts at deploy time:
+#   - CLIENT_URL:            your Vercel frontend origin, e.g. https://random-live-you.vercel.app
+#   - JWT_*_SECRET:          paste from .freebuff/deploy-secrets.txt (generate: node -e ...)
+services:
+  - type: web
+    name: random-live-api
+    runtime: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm ci && npm run prisma:generate && npm run build
+    # Memory mode: no database reachable, so no `db:migrate` — data resets on restart.
+    startCommand: npm start
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PERSISTENCE
+        value: memory
+      # Dummy URLs — env.ts requires them to be non-empty, memory stores never dial them.
+      - key: DATABASE_URL
+        value: postgresql://memory:memory@127.0.0.1:5432/memory
+      - key: REDIS_URL
+        value: redis://127.0.0.1:6379
+      - key: CLIENT_URL
+        sync: false
+      - key: JWT_ACCESS_SECRET
+        sync: false
+      - key: JWT_REFRESH_SECRET
+        sync: false
