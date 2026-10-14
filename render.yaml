@@ -11,7 +11,11 @@ services:
     runtime: node
     plan: free
     rootDir: backend
-    buildCommand: npm ci && npm run prisma:generate && npm run build
+    # NODE_ENV=production (set below) applies at build time too, and npm would
+    # then omit the dev-flagged @types/* packages — which tsc needs. Hence
+    # --include=dev and a separate install/build phase.
+    installCommand: npm ci --include=dev
+    buildCommand: npm run prisma:generate && npm run build
     # Memory mode: no database reachable, so no `db:migrate` — data resets on restart.
     startCommand: npm start
     healthCheckPath: /api/v1/health
