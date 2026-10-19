@@ -4,7 +4,8 @@ import { tryRefreshAuth } from "./auth.api";
 
 export const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || "/api/v1",
-  timeout: 10_000,
+  // Safety margin for a cold instance (free Render sleeps after 15 min idle).
+  timeout: 15_000,
 });
 
 api.interceptors.request.use((config) => {
