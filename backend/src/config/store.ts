@@ -161,6 +161,28 @@ function memId(prefix: string): string {
     .slice(2, 8)}`;
 }
 
+/**
+ * Hard caps for the in-memory fallback.
+ *
+ * The maps used to grow for the whole process lifetime: every guest, session
+ * and chat message stayed reachable, so a busy site slowly walked into the
+ * host's RAM limit and got killed ("Exited with status 1"). Insertion order is
+ * oldest-first, so trimming the front evicts the least useful rows while the
+ * live rooms (referenced from Redis keys) keep working.
+ */
+const MAX_MEMORY_USERS = 20_000;
+const MAX_MEMORY_SESSIONS = 5_000;
+const MAX_MEMORY_MESSAGES = 20_000;
+
+/** Evicts oldest entries until the map fits `max`. */
+function trimOldest<K, V>(map: Map<K, V>, max: number): void {
+  while (map.size > max) {
+    const oldest = map.keys().next().value as K | undefined;
+    if (oldest === undefined) return;
+    map.delete(oldest);
+  }
+}
+
 export class MemoryStore implements DataStore {
   private users = new Map<string, StoreUser>();
   private sessions = new Map<string, StoreSession>();
@@ -179,6 +201,7 @@ export class MemoryStore implements DataStore {
       updatedAt: now,
     };
     this.users.set(user.id, user);
+    trimOldest(this.users, MAX_MEMORY_USERS);
     return user;
   }
 
@@ -215,6 +238,7 @@ export class MemoryStore implements DataStore {
       endReason: null,
     };
     this.sessions.set(session.id, session);
+    trimOldest(this.sessions, MAX_MEMORY_SESSIONS);
     return session;
   }
 
@@ -254,6 +278,7 @@ export class MemoryStore implements DataStore {
       createdAt: new Date(),
     };
     this.messages.set(message.id, message);
+    trimOldest(this.messages, MAX_MEMORY_MESSAGES);
     return message;
   }
 }

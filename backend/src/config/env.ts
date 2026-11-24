@@ -40,6 +40,9 @@ const schema = z.object({
 
   MATCH_TICK_MS: z.coerce.number().int().positive().default(300),
   MATCH_WIDEN_MS: z.coerce.number().int().positive().default(10_000),
+  /** How many waiting users one pairing pass considers per mode. Raising this
+   *  lets a busy queue match far more people per tick. */
+  QUEUE_SCAN_LIMIT: z.coerce.number().int().positive().max(2000).default(200),
   RECENT_PARTNER_TTL_MS: z.coerce.number().int().positive().default(1_800_000),
 });
 

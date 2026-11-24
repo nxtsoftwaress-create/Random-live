@@ -97,6 +97,61 @@ describe("selectPairs", () => {
   });
 });
 
+/** Deterministic PRNG so a randomized test still fails reliably when broken. */
+function seededRng(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+describe("selectPairs with random matching", () => {
+  it("still pairs only compatible, unused users", () => {
+    const users = ["a", "b", "c", "d", "e"].map((id) => candidate({ userId: id }));
+    const pairs = selectPairs(users, ctx({ rng: seededRng(7) }));
+    const seen = pairs.flat().map((c) => c.userId);
+    expect(new Set(seen).size).toBe(seen.length);
+    expect(pairs).toHaveLength(2);
+    for (const [x, y] of pairs) expect(languageCompatible(x, y, ctx())).toBe(true);
+  });
+
+  it("honours exclusions in random mode", () => {
+    const a = candidate({ userId: "a" });
+    const b = candidate({ userId: "b" });
+    expect(
+      selectPairs([a, b], ctx({ rng: seededRng(3), isExcluded: () => true })),
+    ).toHaveLength(0);
+  });
+
+  it("does not always produce the same pairing", () => {
+    const users = ["a", "b", "c", "d"].map((id) => candidate({ userId: id }));
+    const layouts = new Set<string>();
+    for (let seed = 1; seed <= 30; seed++) {
+      const pairs = selectPairs(users, ctx({ rng: seededRng(seed) }));
+      layouts.add(
+        pairs
+          .map(([x, y]) => [x.userId, y.userId].sort().join("+"))
+          .sort()
+          .join("|"),
+      );
+    }
+    expect(layouts.size).toBeGreaterThan(1);
+  });
+
+  it("promotes long waiters ahead of the shuffle so nobody starves", () => {
+    const starving = candidate({ userId: "starving", joinedAt: NOW - 60_000 });
+    const others = ["b", "c", "d", "e"].map((id) => candidate({ userId: id, joinedAt: NOW }));
+    for (let seed = 1; seed <= 10; seed++) {
+      const pairs = selectPairs([starving, ...others], ctx({ rng: seededRng(seed) }));
+      expect(pairs.flat().map((c) => c.userId)).toContain("starving");
+    }
+  });
+});
+
 describe("languageCompatible / interestOverlap", () => {
   it("languageCompatible handles same language immediately", () => {
     const a = candidate({ userId: "a", language: "en", joinedAt: NOW });

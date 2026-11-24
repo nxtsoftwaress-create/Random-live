@@ -5,7 +5,12 @@ import { verifyAccessToken } from "../utils/jwt.js";
 import { logger } from "../utils/logger.js";
 import { setIo } from "./io.js";
 import { ensureUser } from "../services/auth.service.js";
-import { setPresence, clearPresence, refreshPresence } from "../services/presence.service.js";
+import {
+  setPresence,
+  clearPresence,
+  refreshPresence,
+  hasLiveSockets,
+} from "../services/presence.service.js";
 import { leaveQueue } from "../services/matchmaking.service.js";
 import { endSession, getActiveRoomForUser } from "../services/session.service.js";
 import { registerMatchmakingHandlers } from "./matchmaking.socket.js";
@@ -93,6 +98,10 @@ export function createSocketServer(httpServer: http.Server): Server {
     socket.on("disconnect", (reason) => {
       void (async () => {
         await clearPresence(user.id, socket.id);
+        // Multi-tab: only the last socket leaving means the user actually left.
+        // Otherwise closing a second tab would drop a queue place and end a
+        // call the other tab is still in.
+        if (hasLiveSockets(user.id)) return;
         await leaveQueue(user.id);
         const room = await getActiveRoomForUser(user.id);
         if (room) {

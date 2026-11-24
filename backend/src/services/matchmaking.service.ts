@@ -4,6 +4,7 @@ import { getStore } from "../config/store.js";
 import { logger } from "../utils/logger.js";
 import { newRoomId } from "../utils/ids.js";
 import { selectPairs, type Candidate } from "./matchmaking/pairing.js";
+import { getActiveRoomForUser } from "./session.service.js";
 import { getIo, roomChannel } from "../websocket/io.js";
 import type { MatchMode, QueueJoinInput } from "../validators/socket.validator.js";
 
@@ -22,12 +23,40 @@ import type { MatchMode, QueueJoinInput } from "../validators/socket.validator.j
 
 const PREF_TTL_MS = 10 * 60_000;
 const ROOM_TTL_SEC = 4 * 60 * 60;
+/** Safety expiry for a pairing claim: long enough for a session insert, short
+ *  enough that a crashed instance cannot park a user out of the queue. */
+const CLAIM_TTL_SEC = 20;
 
 const queueKey = (mode: MatchMode) => `q:${mode}`;
 const prefKey = (userId: string) => `q:pref:${userId}`;
 const recentKey = (userId: string) => `q:recent:${userId}`;
 const roomKey = (roomId: string) => `room:${roomId}`;
 const userRoomKey = (userId: string) => `user:room:${userId}`;
+const claimKey = (userId: string) => `q:claim:${userId}`;
+
+/**
+ * Atomically reserves both users for one pairing pass.
+ *
+ * Without this, two overlapping ticks (or two instances sharing Redis) could
+ * read the same queue snapshot and match the same person into two rooms: the
+ * client then received two match_found frames, joined two room channels and
+ * the server wrote two sessions — which is what made the app look like it was
+ * crashing under load.
+ */
+async function claimPair(a: Candidate, b: Candidate): Promise<boolean> {
+  const first = await redis.set(claimKey(a.userId), "1", "EX", CLAIM_TTL_SEC, "NX");
+  if (first !== "OK") return false;
+  const second = await redis.set(claimKey(b.userId), "1", "EX", CLAIM_TTL_SEC, "NX");
+  if (second !== "OK") {
+    await redis.del(claimKey(a.userId));
+    return false;
+  }
+  return true;
+}
+
+async function releaseClaims(...userIds: string[]): Promise<void> {
+  if (userIds.length > 0) await redis.del(...userIds.map(claimKey));
+}
 
 export interface QueueEntry extends Candidate {
   mode: MatchMode;
@@ -72,7 +101,9 @@ export async function leaveQueue(userId: string): Promise<void> {
 }
 
 async function loadCandidates(mode: MatchMode): Promise<QueueEntry[]> {
-  const userIds = await redis.zrange(queueKey(mode), 0, 49);
+  // Oldest-first window of the waiting queue. Configurable so a large queue is
+  // not silently capped at a handful of matches per tick.
+  const userIds = await redis.zrange(queueKey(mode), 0, env.QUEUE_SCAN_LIMIT - 1);
   if (userIds.length === 0) return [];
 
   const prefJsons = await redis.mget(...userIds.map(prefKey));
@@ -129,6 +160,23 @@ export async function markRecentPartners(userAId: string, userBId: string): Prom
 async function createMatch(a: Candidate, b: Candidate, mode: MatchMode): Promise<void> {
   const io = getIo();
 
+  // One pairing pass owns these two users until it finishes.
+  if (!(await claimPair(a, b))) return;
+  try {
+    await createClaimedMatch(a, b, mode, io);
+  } finally {
+    await releaseClaims(a.userId, b.userId).catch((err) =>
+      logger.warn({ err }, "Failed to release pairing claims"),
+    );
+  }
+}
+
+async function createClaimedMatch(
+  a: Candidate,
+  b: Candidate,
+  mode: MatchMode,
+  io: ReturnType<typeof getIo>,
+): Promise<void> {
   const [userA, userB] = await Promise.all([
     getStore().findUserById(a.userId),
     getStore().findUserById(b.userId),
@@ -148,6 +196,17 @@ async function createMatch(a: Candidate, b: Candidate, mode: MatchMode): Promise
         message: "Your session expired — reconnecting…",
       });
     }
+    return;
+  }
+
+  // A stale queue entry (a rejoin, a missed cleanup) must never put someone
+  // who is already talking into a second room.
+  const [liveA, liveB] = await Promise.all([
+    getActiveRoomForUser(a.userId),
+    getActiveRoomForUser(b.userId),
+  ]);
+  if (liveA || liveB) {
+    await leaveQueue(liveA ? a.userId : b.userId);
     return;
   }
 
@@ -227,6 +286,9 @@ async function tick(): Promise<void> {
       now: Date.now(),
       widenMs: env.MATCH_WIDEN_MS,
       isExcluded: (x, y) => recent.get(x)?.has(y) === true || recent.get(y)?.has(x) === true,
+      // Random strangers each time, not the same two people at the head of the
+      // queue. Fairness comes from the wait-weighted picks in selectPairs.
+      rng: Math.random,
     });
 
     for (const [a, b] of pairs) {
@@ -240,19 +302,52 @@ async function tick(): Promise<void> {
 }
 
 let timer: NodeJS.Timeout | null = null;
+let running = false;
+let stopped = true;
+
+/**
+ * Schedules the next pass only after the current one settles.
+ *
+ * The old `setInterval` fired a new tick every 300 ms whether or not the
+ * previous one had finished. With a busy queue (and a Postgres insert per
+ * match) ticks piled up: the same candidates were paired repeatedly, sessions
+ * were created twice, and the growing promise backlog is what buckled the
+ * instance once more than a handful of users were waiting.
+ */
+function scheduleNext(): void {
+  if (stopped) return;
+  timer = setTimeout(() => void runTick(), env.MATCH_TICK_MS);
+  timer.unref?.();
+}
+
+async function runTick(): Promise<void> {
+  timer = null;
+  if (running) {
+    scheduleNext();
+    return;
+  }
+  running = true;
+  try {
+    await tick();
+  } catch (err) {
+    logger.error({ err }, "Matchmaker tick failed");
+  } finally {
+    running = false;
+    scheduleNext();
+  }
+}
 
 export function startMatchmaker(): void {
-  if (timer) return;
-  timer = setInterval(() => {
-    tick().catch((err) => logger.error({ err }, "Matchmaker tick failed"));
-  }, env.MATCH_TICK_MS);
-  timer.unref();
-  logger.info({ tickMs: env.MATCH_TICK_MS }, "Matchmaker started");
+  if (!stopped) return;
+  stopped = false;
+  logger.info({ tickMs: env.MATCH_TICK_MS, scanLimit: env.QUEUE_SCAN_LIMIT }, "Matchmaker started");
+  void runTick();
 }
 
 export function stopMatchmaker(): void {
+  stopped = true;
   if (timer) {
-    clearInterval(timer);
+    clearTimeout(timer);
     timer = null;
   }
 }
