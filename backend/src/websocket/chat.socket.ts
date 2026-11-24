@@ -3,12 +3,13 @@ import { chatMessageSchema } from "../validators/socket.validator.js";
 import { handleChatMessage } from "../services/chat.service.js";
 import { getActiveRoomForUser } from "../services/session.service.js";
 import { roomChannel } from "./io.js";
-import { emitError, errorPayload } from "./socket.js";
+import { errorPayload } from "./socket.js";
+import { onSafe } from "./safe.js";
 
 export function registerChatHandlers(socket: Socket): void {
   const user = socket.data.user;
 
-  socket.on("chat_message", async (payload: unknown, ack?: unknown) => {
+  onSafe(socket, "chat_message", async (payload: unknown, ack?: unknown) => {
     const parsed = chatMessageSchema.safeParse(payload);
     if (!parsed.success) {
       socket.emit("chat_error", { code: "validation_error", message: "Invalid chat payload" });
@@ -41,6 +42,6 @@ export function registerChatHandlers(socket: Socket): void {
     socket.to(roomChannel(room.roomId)).emit(event, { userId: user.id });
   };
 
-  socket.on("typing_start", typingRelay("typing_start"));
-  socket.on("typing_stop", typingRelay("typing_stop"));
+  onSafe(socket, "typing_start", typingRelay("typing_start"));
+  onSafe(socket, "typing_stop", typingRelay("typing_stop"));
 }

@@ -134,8 +134,20 @@ async function createMatch(a: Candidate, b: Candidate, mode: MatchMode): Promise
     getStore().findUserById(b.userId),
   ]);
   if (!userA || !userB) {
-    await leaveQueue(a.userId);
-    await leaveQueue(b.userId);
+    // A user row vanished while queued (in-memory restart). Drop only the dead
+    // participant and ask their client to re-authenticate — the survivor keeps
+    // their queue place instead of being silently unmatched forever.
+    for (const [user, candidate] of [
+      [userA, a],
+      [userB, b],
+    ] as const) {
+      if (user) continue;
+      await leaveQueue(candidate.userId);
+      io.to(candidate.socketId).emit("socket_error", {
+        code: "auth_expired",
+        message: "Your session expired — reconnecting…",
+      });
+    }
     return;
   }
 

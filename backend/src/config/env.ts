@@ -1,5 +1,18 @@
-import "dotenv/config";
+import { config as loadEnv } from "dotenv";
 import { z } from "zod";
+
+/**
+ * Load backend/.env so it WINS over whatever the shell already exports.
+ *
+ * dotenv never overrides an existing process variable by default, so a
+ * DATABASE_URL exported by an unrelated project (a different database and
+ * password) silently beat this app's own .env — every boot then failed
+ * auth against the wrong Postgres before falling back to memory.
+ *
+ * Production is untouched: hosts inject real variables and a stray file must
+ * never shadow them.
+ */
+loadEnv({ override: process.env.NODE_ENV !== "production" });
 
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -50,7 +63,11 @@ export const env = {
   ...raw,
   isProd: raw.NODE_ENV === "production",
   isDev: raw.NODE_ENV === "development",
-  clientOrigins: raw.CLIENT_URL.split(",").map((s) => s.trim()).filter(Boolean),
+  // Trailing slashes are a classic copy-paste slip and break exact origin
+  // matching in CORS — normalize here instead of failing every browser.
+  clientOrigins: raw.CLIENT_URL.split(",")
+    .map((s) => s.trim().replace(/\/+$/, ""))
+    .filter(Boolean),
   stunServers: raw.STUN_SERVERS.split(",").map((s) => s.trim()).filter(Boolean),
   turn: raw.TURN_URL
     ? { url: raw.TURN_URL, username: raw.TURN_USERNAME, credential: raw.TURN_PASSWORD }

@@ -7,6 +7,7 @@ import {
 import { getActiveRoomForUser } from "../services/session.service.js";
 import { roomChannel } from "./io.js";
 import { emitError } from "./socket.js";
+import { onSafe } from "./safe.js";
 
 /**
  * Pure signaling relay: the server routes SDP/ICE/media-state between the two
@@ -25,7 +26,7 @@ export function registerWebRtcHandlers(socket: Socket): void {
     return true;
   };
 
-  socket.on("webrtc_offer", async (payload: unknown) => {
+  onSafe(socket, "webrtc_offer", async (payload: unknown) => {
     const parsed = signalingSchema.safeParse(payload);
     if (!parsed.success || !(await guard(parsed.data.roomId))) return;
     socket.to(roomChannel(parsed.data.roomId)).emit("webrtc_offer", {
@@ -34,7 +35,7 @@ export function registerWebRtcHandlers(socket: Socket): void {
     });
   });
 
-  socket.on("webrtc_answer", async (payload: unknown) => {
+  onSafe(socket, "webrtc_answer", async (payload: unknown) => {
     const parsed = signalingSchema.safeParse(payload);
     if (!parsed.success || !(await guard(parsed.data.roomId))) return;
     socket.to(roomChannel(parsed.data.roomId)).emit("webrtc_answer", {
@@ -43,7 +44,7 @@ export function registerWebRtcHandlers(socket: Socket): void {
     });
   });
 
-  socket.on("webrtc_ice_candidate", async (payload: unknown) => {
+  onSafe(socket, "webrtc_ice_candidate", async (payload: unknown) => {
     const parsed = iceCandidateSchema.safeParse(payload);
     if (!parsed.success || !(await guard(parsed.data.roomId))) return;
     socket.to(roomChannel(parsed.data.roomId)).emit("webrtc_ice_candidate", {
@@ -52,7 +53,7 @@ export function registerWebRtcHandlers(socket: Socket): void {
     });
   });
 
-  socket.on("media_state", async (payload: unknown) => {
+  onSafe(socket, "media_state", async (payload: unknown) => {
     const parsed = mediaStateSchema.safeParse(payload);
     if (!parsed.success || !(await guard(parsed.data.roomId))) return;
     socket.to(roomChannel(parsed.data.roomId)).emit("media_state", {

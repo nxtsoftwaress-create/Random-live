@@ -56,7 +56,9 @@ export interface StoreMessage {
 }
 
 export interface DataStore {
-  createUser(data: { displayName: string; isGuest?: boolean }): Promise<StoreUser>;
+  /** `id` lets the server re-create a user row that vanished (e.g. a restart
+   *  wiped in-memory storage) while the client still holds a valid token. */
+  createUser(data: { id?: string; displayName: string; isGuest?: boolean }): Promise<StoreUser>;
   findUserById(id: string): Promise<StoreUser | null>;
   updateUser(
     id: string,
@@ -86,8 +88,14 @@ export interface DataStore {
 type PrismaTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
 export class PrismaStore implements DataStore {
-  async createUser(data: { displayName: string; isGuest?: boolean }): Promise<StoreUser> {
-    return prisma.user.create({ data: { displayName: data.displayName, isGuest: data.isGuest ?? true } });
+  async createUser(data: { id?: string; displayName: string; isGuest?: boolean }): Promise<StoreUser> {
+    return prisma.user.create({
+      data: {
+        ...(data.id ? { id: data.id } : {}),
+        displayName: data.displayName,
+        isGuest: data.isGuest ?? true,
+      },
+    });
   }
 
   async findUserById(id: string): Promise<StoreUser | null> {
@@ -158,10 +166,10 @@ export class MemoryStore implements DataStore {
   private sessions = new Map<string, StoreSession>();
   private messages = new Map<string, StoreMessage>();
 
-  async createUser(data: { displayName: string; isGuest?: boolean }): Promise<StoreUser> {
+  async createUser(data: { id?: string; displayName: string; isGuest?: boolean }): Promise<StoreUser> {
     const now = new Date();
     const user: StoreUser = {
-      id: memId("usr"),
+      id: data.id ?? memId("usr"),
       isGuest: data.isGuest ?? true,
       displayName: data.displayName,
       language: "en",
@@ -258,12 +266,35 @@ let redis: RedisLike = new MemRedis();
 let redisState: RedisState = "connecting";
 let realRedis: Redis | null = null;
 
+/**
+ * MemRedis keeps TTL'd collections in JS maps; nothing evicts them unless we
+ * sweep. A long-lived instance (Render restarts are rare) used to grow until
+ * the 512 MB limit killed the process — which looks like "Exited with status 1".
+ */
+let memSweeper: NodeJS.Timeout | null = null;
+function ensureMemSweeper(): void {
+  if (memSweeper) return;
+  memSweeper = setInterval(() => {
+    if (redis instanceof MemRedis) {
+      redis.sweep();
+      const keys = redis.size();
+      if (keys > 10_000) logger.warn({ keys }, "mem-redis key count is high");
+    }
+  }, 60_000);
+  memSweeper.unref();
+}
+
 async function probeRealRedis(url: string, timeoutMs = 1200): Promise<Redis | null> {
   const candidate = new Redis(url, {
     lazyConnect: true,
     connectTimeout: timeoutMs,
     maxRetriesPerRequest: 1,
     retryStrategy: () => null, // never auto-reconnect — fallback stays put
+  });
+  // ioredis emits 'error' on the socket; an EventEmitter without a listener
+  // throws, so this MUST be attached before connect(). Fallback is expected.
+  candidate.on("error", (err) => {
+    logger.debug({ err: err.message }, "Redis probe failed — using in-memory fallback");
   });
   try {
     await candidate.connect();
@@ -284,6 +315,7 @@ export async function initStores(): Promise<{ redis: RedisState; db: "postgres" 
     redis = new MemRedis();
     redisState = "memory";
     store = new MemoryStore();
+    ensureMemSweeper();
     logger.info("Storage: db=memory redis=memory (PERSISTENCE=memory)");
     return { redis: redisState, db: "memory" };
   }
@@ -291,6 +323,9 @@ export async function initStores(): Promise<{ redis: RedisState; db: "postgres" 
   // Redis first: if reachable, use the real client.
   const probe = await probeRealRedis(env.REDIS_URL);
   if (probe) {
+    probe.on("error", (err) => {
+      logger.warn({ err: err.message }, "Redis error — commands may fail over to no-op");
+    });
     realRedis = probe;
     redis = probe as unknown as RedisLike;
     redisState = "redis";
@@ -317,6 +352,7 @@ export async function initStores(): Promise<{ redis: RedisState; db: "postgres" 
   }
 
   store = db === "postgres" ? new PrismaStore() : new MemoryStore();
+  if (redis instanceof MemRedis) ensureMemSweeper();
 
   if (redisState === "memory" || db === "memory") {
     logger.warn(

@@ -188,6 +188,40 @@ a bug.
   WebSocket-driven process, which is why this architecture uses one long-lived Node
   service.
 
+## 10. Making money: Google AdSense
+
+The frontend ships two ad units — one under the landing-page features and one on
+the “Finding your match” screen. Both stay invisible until you configure them.
+
+1. Apply at [adsense.google.com](https://adsense.google.com). AdSense requires a
+   live site with real content, a privacy policy and working navigation; a
+   brand-new domain can take days or weeks to approve (and may be refused).
+2. Copy your publisher id (**Account → Account information**, `ca-pub-` + 16 digits)
+   and create two **Display ads** units (**Ads → By ad unit**).
+3. Add the vars to your frontend build environment (Cloudflare Pages → Settings →
+   Environment variables, or `frontend/.env` locally):
+
+   | Key | Value |
+   | --- | ----- |
+   | `VITE_ADSENSE_CLIENT_ID` | `ca-pub-0000000000000000` |
+   | `VITE_ADSENSE_SLOT_LANDING` | slot id of the landing unit |
+   | `VITE_ADSENSE_SLOT_MATCHMAKING` | slot id of the in-flow unit |
+
+4. Redeploy. The build also injects the `google-adsense-account` verification
+   meta tag and writes `dist/ads.txt`, so no manual file is needed.
+
+Notes that decide whether this actually earns anything:
+
+- **Consent.** AdSense requires a Google-certified CMP for EEA/UK visitors;
+  without one, personalized ads (and revenue) are withheld there. Configure it
+  under **Privacy & messaging** in the AdSense dashboard.
+- **Content policy.** This is an 18+ chat product. Advertiser-friendly content is
+  mandatory — no adult imagery or copy on indexed pages, or the account is
+  limited. The ad units are deliberately kept off the live-call screen.
+- **Traffic first.** Revenue is per-thousand-impressions; a few hundred visits a
+  day earns cents. Approval and traffic matter far more than ad placement.
+- Never click your own ads. That is the fastest way to a permanent ban.
+
 ---
 
 *Last checked: October 2026. Spotted a stale claim? Fix it — it's your repo.*

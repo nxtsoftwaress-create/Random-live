@@ -9,11 +9,11 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/server.js",
+    "start": "node --enable-source-maps dist/server.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:integration": "cross-env RUN_INTEGRATION=1 vitest run tests/integration",
+    "test:integration": "cross-env RUN_INTEGRATION=1 vitest run --config vitest.integration.config.ts",
     "prisma:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
     "db:studio": "prisma studio"

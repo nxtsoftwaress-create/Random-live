@@ -78,6 +78,38 @@ export class MemRedis implements RedisLike {
   private hashes = new Map<string, Map<string, string>>();
   private zsets = new Map<string, Map<string, number>>();
   private sets = new Map<string, Set<string>>();
+  /** Collection TTLs (hashes/sets/zsets). Real Redis expires these too —
+   *  without tracking them here, `room:{id}` hashes and `q:recent:{user}`
+   *  sets lived for the whole process and slowly OOM'd the instance. */
+  private expiries = new Map<string, number>();
+
+  /** Evicts a collection whose TTL has passed. */
+  private expired(key: string): boolean {
+    const at = this.expiries.get(key);
+    if (at === undefined || at > Date.now()) return false;
+    this.hashes.delete(key);
+    this.zsets.delete(key);
+    this.sets.delete(key);
+    this.strings.delete(key);
+    this.expiries.delete(key);
+    return true;
+  }
+
+  /** Drops everything past its TTL. Called on a timer by initStores(). */
+  sweep(): void {
+    for (const [key, at] of this.expiries) {
+      if (at <= Date.now()) this.expired(key);
+    }
+    const now = Date.now();
+    for (const [key, entry] of this.strings) {
+      if (entry.expiresAt !== null && entry.expiresAt <= now) this.strings.delete(key);
+    }
+  }
+
+  /** Approximate key count — used for leak diagnostics. */
+  size(): number {
+    return this.strings.size + this.hashes.size + this.zsets.size + this.sets.size;
+  }
 
   // ── string ────────────────────────────────────────────────
   async get(key: string): Promise<string | null> {
@@ -132,6 +164,7 @@ export class MemRedis implements RedisLike {
       if (this.hashes.delete(k)) n++;
       if (this.zsets.delete(k)) n++;
       if (this.sets.delete(k)) n++;
+      this.expiries.delete(k);
     }
     return n;
   }
@@ -141,9 +174,17 @@ export class MemRedis implements RedisLike {
   }
 
   cmdExpire(key: string, seconds: number): number {
+    const at = Date.now() + seconds * 1000;
     const e = this.strings.get(key);
-    if (!isLive(e)) return 0;
-    e.expiresAt = Date.now() + seconds * 1000;
+    if (isLive(e)) {
+      e.expiresAt = at;
+      return 1;
+    }
+    // Hashes / sets / zsets expire through the side table.
+    const exists =
+      this.hashes.has(key) || this.sets.has(key) || this.zsets.has(key);
+    if (!exists) return 0;
+    this.expiries.set(key, at);
     return 1;
   }
 
@@ -167,6 +208,7 @@ export class MemRedis implements RedisLike {
   }
 
   cmdHset(key: string, field: string, value: string): number {
+    this.expired(key);
     let h = this.hashes.get(key);
     if (!h) {
       h = new Map();
@@ -178,6 +220,7 @@ export class MemRedis implements RedisLike {
   }
 
   async hget(key: string, field: string): Promise<string | null> {
+    if (this.expired(key)) return null;
     return this.hashes.get(key)?.get(field) ?? null;
   }
 
@@ -187,6 +230,7 @@ export class MemRedis implements RedisLike {
   }
 
   cmdZadd(key: string, score: number, member: string): number {
+    this.expired(key);
     let z = this.zsets.get(key);
     if (!z) {
       z = new Map();
@@ -210,6 +254,7 @@ export class MemRedis implements RedisLike {
   }
 
   async zrange(key: string, start: number, stop: number): Promise<string[]> {
+    if (this.expired(key)) return [];
     const z = this.zsets.get(key);
     if (!z) return [];
     const sorted = [...z.entries()].sort((a, b) => a[1] - b[1]).map(([m]) => m);
@@ -227,10 +272,12 @@ export class MemRedis implements RedisLike {
   }
 
   cmdSmembers(key: string): string[] {
+    if (this.expired(key)) return [];
     return [...(this.sets.get(key) ?? [])];
   }
 
   cmdSadd(key: string, member: string): number {
+    this.expired(key);
     let s = this.sets.get(key);
     if (!s) {
       s = new Set();

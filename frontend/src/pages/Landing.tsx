@@ -2,6 +2,7 @@ import { motion } from "framer-motion";
 import { ArrowRight, MessageSquareText, ShieldCheck, Sparkles, Video } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "../components/ui/Button";
+import { AdSlot } from "../components/AdSlot";
 import { useAuthStore } from "../store/auth.store";
 
 const container = {
@@ -89,6 +90,10 @@ export default function Landing() {
               <p className="mt-1.5 text-sm leading-relaxed text-slate-400">{f.text}</p>
             </motion.div>
           ))}
+        </motion.div>
+
+        <motion.div variants={item} className="mt-12 w-full">
+          <AdSlot placement="landing" format="horizontal" style={{ minHeight: 90 }} />
         </motion.div>
 
         <motion.div variants={item} className="mt-10 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-slate-500">

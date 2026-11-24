@@ -3,6 +3,7 @@ import { queueJoinSchema, roomIdOnlySchema } from "../validators/socket.validato
 import { joinQueue, leaveQueue } from "../services/matchmaking.service.js";
 import { endSession, getActiveRoomForUser } from "../services/session.service.js";
 import { emitError } from "./socket.js";
+import { onSafe } from "./safe.js";
 import { logger } from "../utils/logger.js";
 
 interface Ack {
@@ -17,13 +18,13 @@ function safeAck(ack: unknown, result: Ack): void {
 export function registerMatchmakingHandlers(socket: Socket): void {
   const user = socket.data.user;
 
-  socket.on("queue_join", (payload: unknown, ack?: unknown) => {
+  onSafe(socket, "queue_join", (payload: unknown, ack?: unknown) => {
     const parsed = queueJoinSchema.safeParse(payload);
     if (!parsed.success) {
       safeAck(ack, { ok: false, error: { code: "validation_error", message: "Invalid queue_join payload" } });
       return;
     }
-    joinQueue(user, socket.id, parsed.data)
+    return joinQueue(user, socket.id, parsed.data)
       .then(() => {
         socket.emit("search_started", { mode: parsed.data.mode, language: parsed.data.language });
         safeAck(ack, { ok: true });
@@ -34,8 +35,8 @@ export function registerMatchmakingHandlers(socket: Socket): void {
       });
   });
 
-  socket.on("queue_leave", (ack?: unknown) => {
-    leaveQueue(user.id)
+  onSafe(socket, "queue_leave", (ack?: unknown) => {
+    return leaveQueue(user.id)
       .then(() => {
         socket.emit("search_cancelled");
         safeAck(ack, { ok: true });
@@ -44,7 +45,7 @@ export function registerMatchmakingHandlers(socket: Socket): void {
   });
 
   // Skip current partner → session closes, client returns to the queue.
-  socket.on("next_user", async (payload: unknown) => {
+  onSafe(socket, "next_user", async (payload: unknown) => {
     const parsed = roomIdOnlySchema.safeParse(payload);
     if (!parsed.success) {
       emitError(socket, "validation_error", "Invalid room id");
@@ -60,7 +61,7 @@ export function registerMatchmakingHandlers(socket: Socket): void {
   });
 
   // Explicit end — partner gets a graceful "call ended", no auto requeue.
-  socket.on("call_ended", async (payload: unknown) => {
+  onSafe(socket, "call_ended", async (payload: unknown) => {
     const parsed = roomIdOnlySchema.safeParse(payload);
     if (!parsed.success) return;
     const room = await getActiveRoomForUser(user.id);

@@ -11,6 +11,11 @@ services:
     runtime: node
     plan: free
     rootDir: backend
+    # One instance on purpose: in-memory mode has no shared state, so scaling
+    # out would split the matchmaking queue in two and users would never meet.
+    # (The free plan runs a single instance, so there is nothing to scale here.)
+    # Give in-flight requests a moment on shutdown instead of hard-killing them.
+    maxShutdownDelaySeconds: 10
     # NODE_ENV=production (set below) applies at build time too, and npm would
     # then omit the dev-flagged @types/* packages — which tsc needs. Hence
     # --include=dev in the install that precedes the build.
@@ -21,6 +26,9 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      # Pin the major so a Render default-runtime bump can't break the build.
+      - key: NODE_VERSION
+        value: "20"
       - key: PERSISTENCE
         value: memory
       # Dummy URLs — env.ts requires them to be non-empty, memory stores never dial them.

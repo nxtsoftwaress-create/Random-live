@@ -4,6 +4,7 @@ import { corsOptions } from "../config/cors.js";
 import { verifyAccessToken } from "../utils/jwt.js";
 import { logger } from "../utils/logger.js";
 import { setIo } from "./io.js";
+import { ensureUser } from "../services/auth.service.js";
 import { setPresence, clearPresence, refreshPresence } from "../services/presence.service.js";
 import { leaveQueue } from "../services/matchmaking.service.js";
 import { endSession, getActiveRoomForUser } from "../services/session.service.js";
@@ -46,26 +47,38 @@ export function createSocketServer(httpServer: http.Server): Server {
   setIo(io);
 
   // JWT handshake auth — sockets without a valid access token never connect.
+  // A valid token whose user row is gone (in-memory restart/redeploy) is
+  // healed here rather than rejected, so nobody is stranded un-matchable.
   io.use((socket, next) => {
     const token = socket.handshake.auth?.token as string | undefined;
     if (!token) return next(new Error("unauthorized"));
+    let payload: ReturnType<typeof verifyAccessToken>;
     try {
-      const payload = verifyAccessToken(token);
-      socket.data.user = {
-        id: payload.sub,
-        displayName: payload.displayName,
-        isGuest: payload.isGuest,
-      };
-      next();
+      payload = verifyAccessToken(token);
     } catch {
-      next(new Error("unauthorized"));
+      return next(new Error("unauthorized"));
     }
+    ensureUser({ id: payload.sub, displayName: payload.displayName, isGuest: payload.isGuest })
+      .then((user) => {
+        socket.data.user = {
+          id: user.id,
+          displayName: user.displayName,
+          isGuest: user.isGuest,
+        };
+        next();
+      })
+      .catch((err: unknown) => {
+        logger.warn({ err }, "socket auth rejected");
+        next(new Error("unauthorized"));
+      });
   });
 
   io.on("connection", (socket) => {
     const user = socket.data.user;
     logger.debug({ userId: user.id, socketId: socket.id }, "socket connected");
-    void setPresence(user.id, socket.id);
+    setPresence(user.id, socket.id).catch((err) =>
+      logger.warn({ err, userId: user.id }, "presence set failed"),
+    );
 
     socket.on("heartbeat", () => {
       refreshPresence(user.id, socket.id).catch((err) =>

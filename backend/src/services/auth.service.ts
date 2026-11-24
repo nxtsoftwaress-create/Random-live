@@ -1,4 +1,6 @@
 import { getStore } from "../config/store.js";
+import { env } from "../config/env.js";
+import { logger } from "../utils/logger.js";
 import {
   signAccessToken,
   signRefreshToken,
@@ -65,7 +67,11 @@ export function issueTokens(user: { id: string; displayName: string; isGuest: bo
   };
   return {
     accessToken: signAccessToken(payload),
-    refreshToken: signRefreshToken({ sub: user.id }),
+    refreshToken: signRefreshToken({
+      sub: user.id,
+      displayName: user.displayName,
+      isGuest: user.isGuest,
+    }),
     expiresIn: 2 * 60 * 60, // 2h in seconds
   };
 }
@@ -78,23 +84,70 @@ export async function createGuest(): Promise<{ user: PublicUser; tokens: AuthTok
   return { user: toPublicUser(user), tokens: issueTokens(user) };
 }
 
+/**
+ * Returns the user behind a valid token, re-creating the row when it is gone.
+ *
+ * In memory mode a crash, restart or redeploy wipes every user while clients
+ * keep a 30-day refresh token in localStorage. Without this, those users hit
+ * "Unknown user": the socket connected but could never be matched, so they sat
+ * on "Finding your match" forever — exactly what a restart looked like to them.
+ */
+export async function ensureUser(
+  payload: { id: string; displayName?: string; isGuest?: boolean },
+): Promise<PublicUser> {
+  const existing = await getStore().findUserById(payload.id);
+  if (existing) {
+    if (existing.status === "ACTIVE") return toPublicUser(existing);
+    throw forbidden("Account is not active");
+  }
+
+  if (payload.isGuest === false) {
+    // Registered accounts live in durable storage; a missing row means deleted.
+    throw unauthorized("Unknown user");
+  }
+
+  logger.warn({ userId: payload.id }, "User row missing (restart?) — re-creating guest");
+  try {
+    const recreated = await getStore().createUser({
+      id: payload.id,
+      displayName: payload.displayName || generateDisplayName(),
+      isGuest: true,
+    });
+    return toPublicUser(recreated);
+  } catch (err) {
+    // Concurrent heal (two tabs) — the other one won the insert.
+    if (env.PERSISTENCE === "real") {
+      const raced = await getStore().findUserById(payload.id);
+      if (raced) return toPublicUser(raced);
+    }
+    throw err;
+  }
+}
+
+/** Reads optional identity fields without failing on tokens issued before them. */
+function verifyRefreshPayload(token: string): {
+  sub: string;
+  displayName?: string;
+  isGuest?: boolean;
+} {
+  try {
+    return verifyRefreshToken(token) as { sub: string; displayName?: string; isGuest?: boolean };
+  } catch {
+    throw unauthorized("Invalid refresh token");
+  }
+}
+
 /** Rotates a refresh token into a fresh access+refresh pair. */
 export async function rotateRefreshToken(refreshToken: string): Promise<{
   user: PublicUser;
   tokens: AuthTokens;
 }> {
-  let userId: string;
-  try {
-    ({ sub: userId } = verifyRefreshToken(refreshToken));
-  } catch {
-    throw unauthorized("Invalid refresh token");
-  }
+  // Refresh tokens carry the display name so a wiped guest row can be rebuilt
+  // with the same identity instead of bouncing the user back to the landing page.
+  const { sub, displayName, isGuest } = verifyRefreshPayload(refreshToken);
+  const user = await ensureUser({ id: sub, displayName, isGuest });
 
-  const user = await getStore().findUserById(userId);
-  if (!user) throw unauthorized("Unknown user");
-  if (user.status !== "ACTIVE") throw forbidden("Account is not active");
-
-  return { user: toPublicUser(user), tokens: issueTokens(user) };
+  return { user, tokens: issueTokens(user) };
 }
 
 export async function getUserById(id: string): Promise<PublicUser | null> {

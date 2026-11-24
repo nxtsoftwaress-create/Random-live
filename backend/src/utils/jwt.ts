@@ -7,7 +7,8 @@ export interface AccessPayload {
   isGuest: boolean;
 }
 
-export type RefreshPayload = Pick<AccessPayload, "sub">;
+/** displayName/isGuest are optional so tokens issued before this change stay valid. */
+export type RefreshPayload = Pick<AccessPayload, "sub"> & Partial<Pick<AccessPayload, "displayName" | "isGuest">>;
 
 const ACCESS_TTL = "2h";
 const REFRESH_TTL = "30d";

@@ -12,6 +12,24 @@ export interface RunningServer {
   close: () => Promise<void>;
 }
 
+/**
+ * Last line of defence against a process exit.
+ *
+ * Render reports any crash as "Exited with status 1" and every connected user
+ * is dropped (memory-mode data goes with them). A single stray rejected promise
+ * — an async socket handler, a Redis hiccup, one bad frame — used to be enough
+ * to do that. Log loudly and keep serving instead: a degraded instance beats a
+ * dead one.
+ */
+function installProcessGuards(): void {
+  process.on("unhandledRejection", (reason) => {
+    logger.error({ err: reason }, "Unhandled promise rejection (continuing)");
+  });
+  process.on("uncaughtException", (err) => {
+    logger.error({ err }, "Uncaught exception (continuing)");
+  });
+}
+
 /** Assembles the full server (REST + Socket.IO). Reused by integration tests. */
 export function buildServer(): { httpServer: http.Server; io: ReturnType<typeof createSocketServer> } {
   const app = createApp();
@@ -20,15 +38,23 @@ export function buildServer(): { httpServer: http.Server; io: ReturnType<typeof 
   return { httpServer, io };
 }
 
-async function boot(): Promise<void> {
+async function bootOnce(): Promise<void> {
   // Probe Postgres/Redis; falls back to in-memory stores when unreachable.
   const modes = await initStores();
 
   const { httpServer } = buildServer();
   startMatchmaker();
 
-  await new Promise<void>((resolve) => {
-    httpServer.listen(env.PORT, () => resolve());
+  httpServer.on("error", (err) => {
+    logger.error({ err }, "HTTP server error");
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    httpServer.once("error", reject);
+    httpServer.listen(env.PORT, () => {
+      httpServer.off("error", reject);
+      resolve();
+    });
   });
 
   logger.info(
@@ -64,8 +90,22 @@ async function boot(): Promise<void> {
   process.on("SIGINT", () => shutdown("SIGINT"));
 }
 
+/** A transient store/blip at boot should not cost a full redeploy. */
+async function boot(attempt = 1): Promise<void> {
+  try {
+    await bootOnce();
+  } catch (err) {
+    if (attempt >= 3) throw err;
+    const delayMs = 1000 * attempt;
+    logger.error({ err, attempt }, `Boot failed — retrying in ${delayMs}ms`);
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    await boot(attempt + 1);
+  }
+}
+
 // Run the server unless imported by the test suite.
 if (!process.env.VITEST) {
+  installProcessGuards();
   boot().catch((err) => {
     logger.error({ err }, "Fatal boot error");
     process.exit(1);

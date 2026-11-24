@@ -15,7 +15,9 @@ export function createApp(): express.Express {
   app.use(helmet());
   app.use(cors(corsOptions));
   app.use(express.json({ limit: "100kb" }));
-  app.use(rateLimit({ windowMs: 60_000, max: 240 })); // global API cap/IP
+  // Global API cap per IP. Generous on purpose: the health-check ping, keep-alive
+  // and mobile/CGNAT users can share one address — a tight cap looks like an outage.
+  app.use(rateLimit({ windowMs: 60_000, max: 1200 }));
 
   app.use("/api/v1", apiRouter);
 

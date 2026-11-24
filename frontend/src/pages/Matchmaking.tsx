@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { X } from "lucide-react";
 import { Button } from "../components/ui/Button";
+import { AdSlot } from "../components/AdSlot";
 import { useSocket } from "../hooks/useSocket";
 import { useMatchmaking } from "../hooks/useMatchmaking";
 import { useSettingsStore } from "../store/settings.store";
@@ -99,7 +100,11 @@ export default function Matchmaking() {
           Language matching widens after 10 seconds so you're never stuck waiting.
         </p>
 
-        <Button variant="ghost" onClick={cancel} className="mt-8">
+        <div className="mt-8 w-full max-w-sm">
+          <AdSlot placement="matchmaking" format="rectangle" style={{ minHeight: 250 }} />
+        </div>
+
+        <Button variant="ghost" onClick={cancel} className="mt-6">
           <X className="h-4 w-4" />
           Cancel search
         </Button>

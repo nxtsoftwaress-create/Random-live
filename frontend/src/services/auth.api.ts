@@ -37,13 +37,40 @@ export async function refreshTokens(refreshToken: string): Promise<TokenResponse
   return res.data;
 }
 
-/** Attempts a token refresh; logs out on failure. Safe to call concurrently. */
+/**
+ * Attempts a token refresh. Safe to call concurrently.
+ *
+ * If the refresh fails because the server no longer knows this guest (the
+ * backend runs in memory mode, so a restart or redeploy wipes every user), we
+ * silently register a new guest instead of logging out. The old behaviour
+ * bounced people to the landing page from the middle of a chat — which looked
+ * like the whole app was broken.
+ */
 export async function tryRefreshAuth(): Promise<boolean> {
-  const { refreshToken, setSession, logout } = useAuthStore.getState();
-  if (!refreshToken) return false;
+  const { refreshToken, user, setSession, logout } = useAuthStore.getState();
+
+  if (refreshToken) {
+    try {
+      const res = await refreshTokens(refreshToken);
+      setSession(res.user, res.accessToken, res.refreshToken);
+      return true;
+    } catch {
+      /* fall through to guest re-entry (guests only) */
+    }
+  }
+
+  // Nothing to heal: a first-time visitor has no session to recover.
+  if (!refreshToken && !user) return false;
+
+  // Registered accounts cannot be re-created silently — they must sign in.
+  if (user && !user.isGuest) {
+    logout();
+    return false;
+  }
+
   try {
-    const res = await refreshTokens(refreshToken);
-    setSession(res.user, res.accessToken, res.refreshToken);
+    const fresh = await createGuest();
+    setSession(fresh.user, fresh.accessToken, fresh.refreshToken);
     return true;
   } catch {
     logout();
