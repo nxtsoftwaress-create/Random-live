@@ -10,10 +10,35 @@
  * so a fork or a local checkout never shows broken ad frames.
  */
 
-const CLIENT_ID = (import.meta.env.VITE_ADSENSE_CLIENT_ID ?? "").trim();
-
 /** Publisher ids are `ca-pub-` followed by 16 digits. */
-export const ADSENSE_CLIENT_ID = /^ca-pub-\d{16}$/.test(CLIENT_ID) ? CLIENT_ID : "";
+const PUBLISHER_RE = /ca-pub-\d{16}/;
+
+/**
+ * The publisher id comes from the build env, or — when the site already ships
+ * one in index.html (the account meta tag / adsbygoogle script) — from there.
+ * index.html stays the single place that authorizes this site, so ads and the
+ * generated ads.txt can never point at different accounts.
+ */
+function resolveClientId(): string {
+  const fromEnv = (import.meta.env.VITE_ADSENSE_CLIENT_ID ?? "").trim();
+  if (PUBLISHER_RE.test(fromEnv)) return fromEnv;
+  if (typeof document === "undefined") return "";
+
+  const meta = document.querySelector('meta[name="google-adsense-account"]')?.getAttribute("content");
+  if (meta) {
+    const match = meta.match(PUBLISHER_RE);
+    if (match) return match[0];
+  }
+
+  for (const script of Array.from(document.querySelectorAll<HTMLScriptElement>("script[src]"))) {
+    const match = script.src.match(PUBLISHER_RE);
+    if (match) return match[0];
+  }
+
+  return "";
+}
+
+export const ADSENSE_CLIENT_ID = resolveClientId();
 
 export const adsEnabled = ADSENSE_CLIENT_ID !== "";
 
@@ -35,10 +60,19 @@ export function loadAdSense(): Promise<void> {
   if (loader) return loader;
 
   loader = new Promise<void>((resolve) => {
-    const existing = document.querySelector<HTMLScriptElement>("script[data-adsense-loader]");
+    // index.html may already load adsbygoogle.js for this publisher — reuse it
+    // instead of adding a second copy of the script.
+    const existing = document.querySelector<HTMLScriptElement>(
+      "script[data-adsense-loader], script[src*=\"adsbygoogle.js\"]",
+    );
     if (existing) {
       if (existing.dataset.loaded === "true") resolve();
-      else existing.addEventListener("load", () => resolve(), { once: true });
+      else {
+        existing.addEventListener("load", () => resolve(), { once: true });
+        existing.addEventListener("error", () => resolve(), { once: true });
+        // Already-executed scripts never fire load again.
+        if (existing.dataset.adsenseLoader !== "true") resolve();
+      }
       return;
     }
 
